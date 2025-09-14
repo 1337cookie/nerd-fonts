@@ -2069,6 +2069,7 @@ def setup_arguments():
     sym_font_group.add_argument('--weather',                                    dest='weather',              default=False, action='store_true', help='Add Weather Icons (https://github.com/erikflowers/weather-icons)')
 
     expert_group = parser.add_argument_group('Expert Options')
+    expert_group.add_argument('--pixel-braille', dest='pixel_braille', default=False, action='store_true', help='Copy Braille codepoints (U+2800 to U+28FF) from unscii-16.ttf')
     expert_group.add_argument('--adjust-line-height', '-l',                dest='adjustLineHeight', default=False, action='store_true', help='Whether to adjust line heights (attempt to center powerline separators more evenly)')
     expert_group.add_argument('--boxdrawing',                              dest='forcebox',         default=False, action='store_true', help='Force patching in (over existing) box drawing glyphs')
     expert_group.add_argument('--cell',                                    dest='cellopt',          default=None,  type=str,            help='Adjust or query the cell size, e.g. use "0:1000:-200:800" or "?"')
@@ -2257,6 +2258,35 @@ def main():
     check_fontforge_min_version()
     (args, conf) = setup_arguments()
     logger.debug("Naming mode %d", args.makegroups)
+
+
+    # If --pixel-braille is specified, patch Braille codepoints from unscii-16.ttf
+    if args.pixel_braille:
+        # Open the target font
+        target_font = fontforge.open(args.font)
+        # Open the unscii-16.ttf font
+        unscii_path = os.path.join(os.path.dirname(__file__), 'src', 'glyphs', 'unscii', 'unscii-16.ttf')
+        if not os.path.isfile(unscii_path):
+            logger.critical('unscii-16.ttf not found at %s', unscii_path)
+            sys.exit(1)
+        unscii_font = fontforge.open(unscii_path)
+        unscii_font.encoding = 'UnicodeFull'
+        target_font.encoding = 'UnicodeFull'
+        # Copy Braille codepoints U+2800 to U+28FF
+        for codepoint in range(0x2800, 0x2900):
+            if codepoint in unscii_font:
+                unscii_font.selection.select(codepoint)
+                unscii_font.copy()
+                target_font.selection.select(codepoint)
+                target_font.paste()
+        # Save the modified font
+        output_path = args.outputdir if hasattr(args, 'outputdir') else '.'
+        output_file = os.path.join(output_path, os.path.basename(args.font))
+        target_font.generate(output_file)
+        target_font.close()
+        unscii_font.close()
+        print('Braille codepoints copied from unscii-16.ttf to', output_file)
+        sys.exit(0)
 
     patcher = font_patcher(args, conf)
 
