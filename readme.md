@@ -524,6 +524,7 @@ Expert Options:
   --adjust-line-height, -l
                         Whether to adjust line heights (attempt to center powerline separators more evenly)
   --boxdrawing          Force patching in (over existing) box drawing glyphs
+  --pixel-braille       Replace Pixel Braille codepoints (U+2800 to U+28FF) from Unscii-16 (http://viznut.fi/unscii/)
   --cell CELLOPT        Adjust or query the cell size, e.g. use "0:1000:-200:800" or "?"
   --configfile CONFIGFILE
                         Specify a file path for configuration file (see sample: src/config.sample.cfg)

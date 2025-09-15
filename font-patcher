@@ -980,6 +980,15 @@ class font_patcher:
             'default': {'align': 'c', 'valign': 'c', 'stretch': 'pa', 'params': {'careful': self.args.careful}}
         }
 
+        SYM_ATTR_BRAILLE = {
+            # Attributes for pixel-style braille glyphs
+            # Pixel braille glyphs (e.g. from unscii-16.ttf)
+
+            # TODO: Find appropriate way to maintain square "pixels" and alignment glyph to glyph.
+            # This might require changing the cell size of the font but I haven't had any positive results.
+            'default': { 'align': 'c', 'valign': 'c', 'stretch': '^xy', 'params': { 'careful': self.args.careful }}
+        }
+
         # Most glyphs we want to maximize (individually) during the scale
         # However, there are some that need to be small or stay relative in
         # size to each other.
@@ -1116,6 +1125,7 @@ class font_patcher:
         ]}
         MDI_SCALE_LIST = None # Maybe later add some selected ScaleGroups
 
+        BRAILLE_SCALE_LIST = {'ShiftMode': '', 'ScaleGroups': [ range(0x2800, 0x28FF + 1) ] }
 
         # Define the character ranges
         # Symbol font ranges
@@ -1145,7 +1155,8 @@ class font_patcher:
             {'Enabled': self.args.octicons,             'Name': "Octicons",                'Filename': "octicons/octicons.otf",                          'Exact': True,  'SymStart': 0x2665, 'SymEnd': 0x2665, 'SrcStart': None,   'ScaleRules': OCTI_SCALE_LIST,  'Attributes': SYM_ATTR_DEFAULT},  # Heart
             {'Enabled': self.args.octicons,             'Name': "Octicons",                'Filename': "octicons/octicons.otf",                          'Exact': True,  'SymStart': 0X26A1, 'SymEnd': 0X26A1, 'SrcStart': None,   'ScaleRules': OCTI_SCALE_LIST,  'Attributes': SYM_ATTR_DEFAULT},  # Zap
             {'Enabled': self.args.octicons,             'Name': "Octicons",                'Filename': "octicons/octicons.otf",                          'Exact': False, 'SymStart': 0xF27C, 'SymEnd': 0xF306, 'SrcStart': 0xF4A9, 'ScaleRules': OCTI_SCALE_LIST,  'Attributes': SYM_ATTR_DEFAULT},
-            {'Enabled': self.args.codicons,             'Name': "Codicons",                'Filename': "codicons/codicon.ttf",                           'Exact': True,  'SymStart': 0xEA60, 'SymEnd': 0xEC1E, 'SrcStart': None,   'ScaleRules': CODI_SCALE_LIST,  'Attributes': SYM_ATTR_DEFAULT},
+            {'Enabled': self.args.codicons,             'Name': "Codicons",                'Filename': "codicons/codicon.ttf",                            'Exact': True,  'SymStart': 0xEA60, 'SymEnd': 0xEC1E, 'SrcStart': None,   'ScaleRules': CODI_SCALE_LIST,  'Attributes': SYM_ATTR_DEFAULT},
+            {'Enabled': self.args.pixelbraille,         'Name': "Pixel Braille",           'Filename': "unscii/unscii-16.ttf",                           'Exact': True,  'SymStart': 0x2800, 'SymEnd': 0x28FF, 'SrcStart': None,   'ScaleRules': BRAILLE_SCALE_LIST, 'Attributes': SYM_ATTR_BRAILLE},
             {'Enabled': self.args.custom,               'Name': "Custom",                  'Filename': self.args.custom,                                 'Exact': True,  'SymStart': 0x0000, 'SymEnd': 0x0000, 'SrcStart': None,   'ScaleRules': None,             'Attributes': CUSTOM_ATTR}
         ]
 
@@ -1547,8 +1558,26 @@ class font_patcher:
                 symbolFont.selection.select(sym_glyph.encoding)
                 symbolFont.copy()
 
-                # Paste it
-                self.sourceFont.selection.select(currentSourceFontGlyph)
+                # Paste it: ensure the target codepoint is valid and the slot exists
+                if currentSourceFontGlyph < 0 or currentSourceFontGlyph > 0x10FFFF:
+                    logger.warning("Target codepoint %X out of Unicode range. Skipping...", currentSourceFontGlyph)
+                    continue
+                try:
+                    self.sourceFont.selection.select(currentSourceFontGlyph)
+                except ValueError:
+                    # Try to ensure UnicodeFull encoding and create the glyph slot if missing
+                    try:
+                        self.sourceFont.encoding = 'UnicodeFull'
+                    except Exception:
+                        pass
+                    if currentSourceFontGlyph not in self.sourceFont:
+                        try:
+                            self.sourceFont.createChar(currentSourceFontGlyph)
+                        except Exception:
+                            logger.error("Failed to create glyph slot %X. Skipping...", currentSourceFontGlyph)
+                            continue
+                    # Try selection again (let exception propagate if it still fails)
+                    self.sourceFont.selection.select(currentSourceFontGlyph)
                 self.sourceFont.paste()
                 self.sourceFont[currentSourceFontGlyph].glyphname = \
                         self.glyphnames.get(currentSourceFontGlyph, sym_glyph.glyphname) if setName != 'Custom' else sym_glyph.glyphname
@@ -1594,16 +1623,6 @@ class font_patcher:
             if self.args.single:
                 # Check and correct the scaling after rounding (if all 3 tries fail we will get a warning later on)
                 destmaxsize = self.font_dim['width'] * max(1, 1 + (overlap or 0))
-                for increaser in range(3):
-                    (xmin, _, xmax, _) = self.sourceFont[currentSourceFontGlyph].boundingBox()
-                    sizeerror = (xmax - xmin) - destmaxsize
-                    if sizeerror <= 0:
-                        break
-                    # Start from scratch with a new unscaled glyph
-                    scale_ratio_x /= 1 + ((sizeerror + increaser) / destmaxsize)
-                    self.sourceFont.paste()
-                    self.sourceFont[currentSourceFontGlyph].transform(psMat.scale(scale_ratio_x, scale_ratio_y))
-                    self.sourceFont[currentSourceFontGlyph].round()
 
             # We pasted and scaled now we want to align/move
             # Use the dimensions from the newly pasted and stretched glyph to avoid any rounding errors
@@ -2069,7 +2088,7 @@ def setup_arguments():
     sym_font_group.add_argument('--weather',                                    dest='weather',              default=False, action='store_true', help='Add Weather Icons (https://github.com/erikflowers/weather-icons)')
 
     expert_group = parser.add_argument_group('Expert Options')
-    expert_group.add_argument('--pixel-braille', dest='pixel_braille', default=False, action='store_true', help='Copy Braille codepoints (U+2800 to U+28FF) from unscii-16.ttf')
+    expert_group.add_argument('--pixel-braille',                           dest='pixelbraille',     default=False, action='store_true', help='Replace Pixel Braille codepoints (U+2800 to U+28FF) from Unscii-16 (http://viznut.fi/unscii/)')
     expert_group.add_argument('--adjust-line-height', '-l',                dest='adjustLineHeight', default=False, action='store_true', help='Whether to adjust line heights (attempt to center powerline separators more evenly)')
     expert_group.add_argument('--boxdrawing',                              dest='forcebox',         default=False, action='store_true', help='Force patching in (over existing) box drawing glyphs')
     expert_group.add_argument('--cell',                                    dest='cellopt',          default=None,  type=str,            help='Adjust or query the cell size, e.g. use "0:1000:-200:800" or "?"')
@@ -2260,33 +2279,6 @@ def main():
     logger.debug("Naming mode %d", args.makegroups)
 
 
-    # If --pixel-braille is specified, patch Braille codepoints from unscii-16.ttf
-    if args.pixel_braille:
-        # Open the target font
-        target_font = fontforge.open(args.font)
-        # Open the unscii-16.ttf font
-        unscii_path = os.path.join(os.path.dirname(__file__), 'src', 'glyphs', 'unscii', 'unscii-16.ttf')
-        if not os.path.isfile(unscii_path):
-            logger.critical('unscii-16.ttf not found at %s', unscii_path)
-            sys.exit(1)
-        unscii_font = fontforge.open(unscii_path)
-        unscii_font.encoding = 'UnicodeFull'
-        target_font.encoding = 'UnicodeFull'
-        # Copy Braille codepoints U+2800 to U+28FF
-        for codepoint in range(0x2800, 0x2900):
-            if codepoint in unscii_font:
-                unscii_font.selection.select(codepoint)
-                unscii_font.copy()
-                target_font.selection.select(codepoint)
-                target_font.paste()
-        # Save the modified font
-        output_path = args.outputdir if hasattr(args, 'outputdir') else '.'
-        output_file = os.path.join(output_path, os.path.basename(args.font))
-        target_font.generate(output_file)
-        target_font.close()
-        unscii_font.close()
-        print('Braille codepoints copied from unscii-16.ttf to', output_file)
-        sys.exit(0)
 
     patcher = font_patcher(args, conf)
 
